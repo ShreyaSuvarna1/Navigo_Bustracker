@@ -97,6 +97,40 @@ function Auth({ onDone }) {
   return <main className="auth-page"><section className="brand"><div className="logo">N</div><h1>NAVIGO</h1><p>Live Mangaluru bus intelligence.</p></section><form onSubmit={submit} className="card auth-card"><div className="role-switch"><button type="button" className={role === 'passenger' ? 'active' : ''} onClick={() => setRole('passenger')}>Passenger</button><button type="button" className={role === 'driver' ? 'active' : ''} onClick={() => setRole('driver')}>Driver</button></div><h2>{mode === 'login' ? 'Welcome back' : 'Create your account'}</h2><label>Email<input type="email" value={email} onChange={event => setEmail(event.target.value)} required placeholder="you@example.com" /></label><label>Password<input type="password" value={password} onChange={event => setPassword(event.target.value)} minLength="8" required placeholder="At least 8 characters" /></label>{error && <p className="error">{error}</p>}<button className="primary" disabled={busy}>{busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}</button><button type="button" className="text-button" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>{mode === 'login' ? 'New here? Create an account' : 'Already have an account? Sign in'}</button></form></main>;
 }
 
+function AuthV2({ onDone }) {
+  const [mode, setMode] = useState('login');
+  const [role, setRole] = useState('passenger');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [code, setCode] = useState('');
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  const verifyMode = mode === 'verify';
+  async function request(url, body) {
+    const response = await fetch(`${API}${url}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'Something went wrong.');
+    return data;
+  }
+  async function submit(event) {
+    event.preventDefault(); setBusy(true); setError(''); setMessage('');
+    try {
+      if (mode === 'login') {
+        const data = await request('/auth/login', { email, password });
+        localStorage.setItem('navigo_session', JSON.stringify(data)); onDone(data); return;
+      }
+      if (mode === 'register') {
+        const data = await request('/auth/request-code', { email, password, role });
+        setMessage(data.message); setMode('verify'); return;
+      }
+      const data = await request('/auth/verify-code', { email, code });
+      localStorage.setItem('navigo_session', JSON.stringify(data)); onDone(data);
+    } catch (requestError) { setError(requestError.message); } finally { setBusy(false); }
+  }
+  return <main className="auth-page"><section className="brand"><div className="logo">N</div><div className="eyebrow">MANGALURU, IN MOTION</div><h1>Every journey, <em>clearer.</em></h1><p>Find your bus, follow it live, and move with confidence.</p><div className="trust-list"><span>Live route updates</span><span>Verified accounts</span><span>Smart timetable search</span></div></section><form onSubmit={submit} className="card auth-card"><div className="auth-heading"><span className="mini-logo">N</span><div><h2>{verifyMode ? 'Check your inbox' : mode === 'login' ? 'Welcome back' : 'Create your account'}</h2><p>{verifyMode ? `We sent a six-digit code to ${email}.` : mode === 'login' ? 'Sign in to continue your journey.' : 'A quick verification keeps NAVIGO trusted.'}</p></div></div>{!verifyMode && <><div className="role-switch"><button type="button" className={role === 'passenger' ? 'active' : ''} onClick={() => setRole('passenger')}>Passenger</button><button type="button" className={role === 'driver' ? 'active' : ''} onClick={() => setRole('driver')}>Driver</button></div><label>Email address<input type="email" value={email} onChange={event => setEmail(event.target.value)} required placeholder="you@gmail.com" autoComplete="email" /></label><label>Password<input type="password" value={password} onChange={event => setPassword(event.target.value)} minLength="8" required placeholder="At least 8 characters" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} /></label></>}{verifyMode && <label>Verification code<input className="code-input" inputMode="numeric" maxLength="6" value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ''))} required placeholder="123456" autoComplete="one-time-code" /></label>}{message && <p className="success">{message}</p>}{error && <p className="error">{error}</p>}<button className="primary wide" disabled={busy}>{busy ? 'Please wait...' : verifyMode ? 'Verify and continue' : mode === 'login' ? 'Sign in securely' : 'Send verification code'}</button>{verifyMode ? <button type="button" className="text-button" onClick={() => { setMode('register'); setCode(''); }}>Use a different email</button> : <button type="button" className="text-button" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); }}>{mode === 'login' ? 'New to NAVIGO? Create an account' : 'Already have an account? Sign in'}</button>}<p className="terms">By continuing, you agree to use live location responsibly.</p></form></main>;
+}
+
 function Route({ option }) {
   if (option.type === 'connection') return <article className="route-card"><strong><span className="bus-badge">{option.first.number}</span> → {option.transfer.name} → <span className="bus-badge">{option.second.number}</span></strong><span>{option.durationMin} min · one change</span></article>;
   return <article className="route-card"><strong><span className="bus-badge">{option.route.number}</span> {option.route.name}</strong><span>{option.durationMin} min · {option.bus?.occupancy || 'Tracking unavailable'} · ₹{option.route.fare}</span></article>;
@@ -145,7 +179,7 @@ function Driver({ session, onLogout }) {
 function App() {
   const [session, setSession] = useState(() => JSON.parse(localStorage.getItem('navigo_session') || 'null'));
   const logout = () => { localStorage.removeItem('navigo_session'); setSession(null); };
-  if (!session) return <Auth onDone={setSession} />;
+  if (!session) return <AuthV2 onDone={setSession} />;
   return session.user.role === 'driver' ? <Driver session={session} onLogout={logout} /> : <Passenger session={session} onLogout={logout} />;
 }
 

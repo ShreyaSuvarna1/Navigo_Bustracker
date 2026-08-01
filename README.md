@@ -25,7 +25,19 @@ Generate a random `JWT_SECRET` with at least 32 characters. It signs user sessio
 3. Run `npm.cmd install` from PowerShell, then `npm.cmd run dev`.
 4. Open `http://localhost:5173`.
 
-Create a driver account in one browser and a passenger account in another. Start the driver shift and approve location permission; the passenger map updates immediately.
+Create a driver account in one browser and a passenger account in another. New accounts receive a six-digit verification code by Gmail before they can sign in. Start the driver shift and approve location permission; the passenger map updates immediately.
+
+## Gmail verification
+
+1. Turn on 2-Step Verification for the Gmail account that will send NAVIGO emails.
+2. Create a Gmail **App Password** and put the 16-character value in `GMAIL_APP_PASSWORD`.
+3. Add the sending address as `GMAIL_USER`.
+
+Never use your normal Gmail password in `.env` or commit `.env` to Git.
+
+## Timetable data
+
+The API loads routes, stops, buses, and timetable entries from `Navigo.xlsx`. In this local setup the supplied workbook is one folder above the project, so it is found automatically. For deployment, upload the workbook with the service and set `DATA_WORKBOOK_PATH` to its deployed path. The health endpoint reports whether the workbook was loaded.
 
 ## Deploy to Render
 
