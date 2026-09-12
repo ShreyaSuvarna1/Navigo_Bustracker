@@ -39,6 +39,27 @@ Never use your normal Gmail password in `.env` or commit `.env` to Git.
 
 The API loads routes, stops, buses, and timetable entries from `Navigo.xlsx`. In this local setup the supplied workbook is one folder above the project, so it is found automatically. For deployment, upload the workbook with the service and set `DATA_WORKBOOK_PATH` to its deployed path. The health endpoint reports whether the workbook was loaded.
 
+## Hardware GPS ingestion and arrival estimates
+
+Set a long random `DEVICE_API_KEY` in the server environment and assign every device to its bus in `DEVICE_REGISTRY_JSON`. The device never chooses its bus in a request: the backend resolves the device ID to its configured bus ID. Each device sends updates to `POST /api/device/coordinates` with `Content-Type: application/json` and an `X-Device-Key` header containing that secret.
+
+```json
+{
+  "deviceId": "gps-unit-001",
+  "lat": 12.9141,
+  "lng": 74.8560,
+  "occupancy": "Seats available",
+  "accuracy": 12,
+  "sentAt": "2026-09-10T09:45:00.000Z"
+}
+```
+
+Each accepted location is broadcast instantly to passengers. When a passenger shares their current location, NAVIGO uses the server-side Google Routes API to calculate traffic-aware driving time and distance for buses updated within the last five minutes. The Routes API key stays on the server.
+
+Driver accounts are also bound to one valid bus ID at registration and must provide that ID at login. If the GPS hardware is unavailable, a signed-in driver can temporarily share their phone location; the backend always applies it to that same assigned bus, so it cannot be used to move another bus.
+
+Do not rely on IP address alone for mobile devices—cellular providers and NAT can change it. A unique device ID plus `DEVICE_API_KEY` is the reliable binding; the optional `ip` field in `DEVICE_REGISTRY_JSON` is only suitable for a fixed, trusted public IP.
+
 ## Deploy to Render
 
 The included `render.yaml` and `Dockerfile` deploy the web client and Socket.IO API together, which preserves real-time connections.
