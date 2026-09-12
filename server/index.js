@@ -68,9 +68,16 @@ const buses = new Map(transit.buses.map(bus => [bus.id, bus]));
 const deviceRegistry = new Map(configuredDevices.filter(item => item?.deviceId && item?.busId).map(item => [String(item.deviceId), { busId: String(item.busId), ip: item.ip ? String(item.ip) : null }]));
 const mailer = process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD ? nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD } }) : null;
 const publicUser = user => ({ id: user.id, email: user.email, role: user.role, busId: user.busId || null });
-const tokenFor = user => jwt.sign(publicUser(user), secret, { expiresIn: '12h' });
+const tokenFor = user => jwt.sign({ ...publicUser(user), sessionVersion: user.sessionVersion }, secret, { expiresIn: '12h' });
 const auth = roles => (req, res, next) => {
-  try { const user = jwt.verify((req.headers.authorization || '').replace('Bearer ', ''), secret); if (roles && !roles.includes(user.role)) return res.status(403).json({ message: 'Forbidden' }); req.user = user; next(); }
+  try {
+    const user = jwt.verify((req.headers.authorization || '').replace('Bearer ', ''), secret);
+    const currentUser = users.get(user.email);
+    if (!currentUser || currentUser.sessionVersion !== user.sessionVersion) throw new Error('Session is no longer valid');
+    if (roles && !roles.includes(user.role)) return res.status(403).json({ message: 'Forbidden' });
+    req.user = user;
+    next();
+  }
   catch { res.status(401).json({ message: 'Sign in required' }); }
 };
 
@@ -118,30 +125,32 @@ app.get('/api/timetable', (req, res) => res.json(transit.rows.filter(row => !req
 app.get('/api/driver/bus', auth(['driver']), (req, res) => res.json(buses.get(req.user.busId) || { id: req.user.busId, routeId: 'route', occupancy: 'Not reported', updatedAt: null }));
 
 app.post('/api/auth/request-code', async (req, res) => {
-  const { email, password, role = 'passenger', busId } = req.body;
+  const { password, role = 'passenger', busId } = req.body;
+  const email = String(req.body.email || '').trim().toLowerCase();
   const isDriver = role === 'driver';
   if (!/^\S+@\S+\.\S+$/.test(email) || String(password).length < 8) return res.status(400).json({ message: 'Use a valid email and an 8+ character password.' });
   if (isDriver && (!busId || !buses.has(String(busId).trim()))) return res.status(400).json({ message: 'Enter a valid assigned bus ID to create a driver account.' });
-  if (users.has(email)) return res.status(409).json({ message: 'Account already exists. Please sign in.' });
   if (pendingCodes.get(email)?.sentAt > Date.now() - 60_000) return res.status(429).json({ message: 'Please wait a minute before requesting another code.' });
   if (!mailer) return res.status(503).json({ message: 'Email verification is not configured. Add Gmail settings to .env.' });
   const code = crypto.randomInt(100000, 1000000).toString();
   pendingCodes.set(email, { code, password: await bcrypt.hash(password, 12), role: isDriver ? 'driver' : 'passenger', busId: isDriver ? String(busId).trim() : null, sentAt: Date.now(), expiresAt: Date.now() + 600000, attempts: 0 });
-  try { await mailer.sendMail({ from: `NAVIGO <${process.env.GMAIL_USER}>`, to: email, subject: 'Your NAVIGO verification code', text: `Your NAVIGO verification code is ${code}. It expires in 10 minutes.`, html: `<p>Your NAVIGO verification code is</p><h1>${code}</h1><p>It expires in 10 minutes.</p>` }); res.status(202).json({ message: 'Verification code sent.' }); }
+  try { await mailer.sendMail({ from: `NAVIGO <${process.env.GMAIL_USER}>`, to: email, subject: 'Your NAVIGO verification code', text: `Your NAVIGO verification code is ${code}. It expires in 10 minutes.`, html: `<p>Your NAVIGO verification code is</p><h1>${code}</h1><p>It expires in 10 minutes.</p>` }); res.status(202).json({ message: users.has(email) ? 'Verification code sent. Verifying it will replace your old password and sign out previous sessions.' : 'Verification code sent.' }); }
   catch (error) { pendingCodes.delete(email); console.error(error.message); res.status(502).json({ message: 'We could not send the verification email. Check your Gmail settings.' }); }
 });
 
 app.post('/api/auth/verify-code', (req, res) => {
-  const pending = pendingCodes.get(req.body.email);
-  if (!pending || pending.expiresAt < Date.now()) { pendingCodes.delete(req.body.email); return res.status(400).json({ message: 'This code has expired. Request a new one.' }); }
-  if (++pending.attempts > 5) { pendingCodes.delete(req.body.email); return res.status(429).json({ message: 'Too many attempts. Request a new code.' }); }
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const pending = pendingCodes.get(email);
+  if (!pending || pending.expiresAt < Date.now()) { pendingCodes.delete(email); return res.status(400).json({ message: 'This code has expired. Request a new one.' }); }
+  if (++pending.attempts > 5) { pendingCodes.delete(email); return res.status(429).json({ message: 'Too many attempts. Request a new code.' }); }
   if (String(req.body.code).trim() !== pending.code) return res.status(400).json({ message: 'That verification code is incorrect.' });
-  const user = { id: crypto.randomUUID(), email: req.body.email, role: pending.role, busId: pending.busId, password: pending.password }; users.set(user.email, user); pendingCodes.delete(user.email);
+  const oldUser = users.get(email);
+  const user = { id: oldUser?.id || crypto.randomUUID(), email, role: pending.role, busId: pending.busId, password: pending.password, sessionVersion: crypto.randomUUID() }; users.set(user.email, user); pendingCodes.delete(user.email);
   res.status(201).json({ token: tokenFor(user), user: publicUser(user) });
 });
 
 app.post('/api/auth/login', async (req, res) => {
-  const user = users.get(req.body.email);
+  const user = users.get(String(req.body.email || '').trim().toLowerCase());
   if (!user || !await bcrypt.compare(req.body.password || '', user.password)) return res.status(401).json({ message: 'Incorrect email or password.' });
   if (user.role === 'driver' && String(req.body.busId || '').trim() !== user.busId) return res.status(403).json({ message: 'Enter the bus ID assigned to this driver account.' });
   res.json({ token: tokenFor(user), user: publicUser(user) });
