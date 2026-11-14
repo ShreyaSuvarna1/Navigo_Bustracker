@@ -747,6 +747,59 @@ function nearestStop(stops, point) {
 }
 
 /*
+  Position of a GPS point along an ordered route.  A whole number is a stop index and a decimal
+  is a point between two stops.  Projecting onto route segments is more reliable than choosing
+  the nearest stop: a bus halfway between stop 3 and stop 4 must still travel through stop 4
+  before reaching any later stop.
+*/
+function routeProgress(point, stops) {
+  if (!validCoords(point) || stops.length < 2) return null;
+
+  const latitudeScale = 111_320;
+  const longitudeScale = latitude => 111_320 * Math.cos((latitude * Math.PI) / 180);
+  let best = null;
+
+  for (let index = 0; index < stops.length - 1; index += 1) {
+    const from = stops[index];
+    const to = stops[index + 1];
+    if (!validCoords(from) || !validCoords(to)) continue;
+
+    const scaleLng = longitudeScale((from.lat + to.lat + point.lat) / 3);
+    const dx = (to.lng - from.lng) * scaleLng;
+    const dy = (to.lat - from.lat) * latitudeScale;
+    const lengthSquared = dx * dx + dy * dy;
+    if (!Number.isFinite(lengthSquared) || lengthSquared === 0) continue;
+
+    const px = (point.lng - from.lng) * scaleLng;
+    const py = (point.lat - from.lat) * latitudeScale;
+    const fraction = Math.max(0, Math.min(1, (px * dx + py * dy) / lengthSquared));
+    const offsetX = px - fraction * dx;
+    const offsetY = py - fraction * dy;
+    const distanceMeters = Math.hypot(offsetX, offsetY);
+
+    if (!best || distanceMeters < best.distanceMeters) {
+      best = { progress: index + fraction, distanceMeters };
+    }
+  }
+
+  return best;
+}
+
+function busApproachesStop(bus, route, stop) {
+  const stops = routeStopObjects(route);
+  const stopIndex = stops.findIndex(item => item.id === stop.id);
+  const progress = routeProgress(bus, stops);
+
+  // If the route geometry cannot determine a position, keep the bus visible rather than
+  // incorrectly hiding a valid live update.
+  if (stopIndex < 0 || !progress || progress.distanceMeters > 800) return { approaches: true, progress: null, stopIndex };
+
+  // A small tolerance covers normal GPS drift while preventing a bus that has already passed
+  // the passenger's stop from receiving a misleading return-route ETA.
+  return { approaches: progress.progress <= stopIndex + 0.08, progress, stopIndex };
+}
+
+/*
   Computes a bus's current speed (km/h) from its previous reported position/timestamp vs. its
   new one. Returns null — never NaN, Infinity, or negative — whenever the speed cannot be
   trusted: no previous position, missing/invalid timestamps, zero or negative elapsed time, or a
@@ -1720,16 +1773,25 @@ async function buildJourneyView(journey) {
 async function buildArrival(bus, pickupStop, trackers) {
   const route = routeOf(bus);
   const stops = routeStopObjects(route);
-  const stopIndex = stops.findIndex(stop => stop.id === pickupStop.id);
+  const approach = busApproachesStop(bus, route, pickupStop);
+  const stopIndex = approach.stopIndex;
 
   const gpsDistanceMeters = gpsDistance(bus, pickupStop);
   const hasArrived = gpsDistanceMeters !== null && gpsDistanceMeters <= ARRIVAL_THRESHOLD_METERS;
 
-  // Live road route from the bus to the pickup stop (skipped once arrived).
+  // Live road route from the bus to the pickup stop (skipped once arrived). Route through the
+  // remaining scheduled stops so Google cannot return a shortcut that skips the bus's route.
   let road = null;
   if (!hasArrived) {
     try {
-      road = await cachedRoute(`arrival:${bus.id}>${pickupStop.id}`, positionFingerprint(bus), ROUTE_TTL_MS, () => routeToLocation(bus, pickupStop));
+      const nextStop = approach.progress ? Math.floor(approach.progress.progress) + 1 : 0;
+      const remainingStops = stopIndex > nextStop ? stops.slice(nextStop, stopIndex) : [];
+      road = await cachedRoute(
+        `arrival:${bus.id}>${pickupStop.id}`,
+        `${positionFingerprint(bus)}|${remainingStops.map(stop => stop.id).join(',')}`,
+        ROUTE_TTL_MS,
+        () => routeToLocation(bus, pickupStop, remainingStops)
+      );
     } catch (error) {
       console.error(`ETA calculation failed for bus ${bus.id}:`, error?.message || error);
     }
@@ -1765,6 +1827,7 @@ async function buildArrival(bus, pickupStop, trackers) {
     boardingStop: targetStop,
     targetStop,
     boardingStopIndex: stopIndex,
+    routeProgress: approach.progress ? Number(approach.progress.progress.toFixed(3)) : null,
     boardingStopAuto: true,
     stopDistanceMeters: null,
     routeStops: stops.map(stopView),
@@ -1905,7 +1968,10 @@ app.post('/api/arrivals', auth(['passenger']), async (req, res) => {
     const pickupStop = transit.stopsById.get(pickup.stop.id);
 
     // Only live buses whose assigned route actually contains the pickup stop.
-    const serving = live.filter(bus => routeOf(bus)?.stops.includes(pickupStop.id));
+    const serving = live.filter(bus => {
+      const route = routeOf(bus);
+      return route?.stops.includes(pickupStop.id) && busApproachesStop(bus, route, pickupStop).approaches;
+    });
 
     // Promise.allSettled means one failed lookup does not break all buses.
     const results = await Promise.allSettled(serving.map(bus => buildArrival(bus, pickupStop, detection.trackers)));
