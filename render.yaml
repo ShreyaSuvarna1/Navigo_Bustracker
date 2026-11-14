@@ -25,5 +25,9 @@ services:
         sync: false
       - key: BREVO_SENDER_NAME
         value: NAVIGO
+      - key: GMAIL_USER
+        sync: false
+      - key: GMAIL_APP_PASSWORD
+        sync: false
       - key: USERS_DB_PATH
         value: /app/data/users.db

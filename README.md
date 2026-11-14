@@ -34,6 +34,8 @@ NAVIGO sends verification codes through [Brevo](https://www.brevo.com/). Add the
 - `BREVO_SENDER_EMAIL` — a sender address verified in Brevo
 - `BREVO_SENDER_NAME` — optional display name (defaults to `NAVIGO`)
 
+For an existing Gmail setup, NAVIGO also supports `GMAIL_USER` and `GMAIL_APP_PASSWORD` (a Gmail App Password). Brevo is used when both providers are configured; otherwise Gmail is used.
+
 Never commit email-provider API keys to Git.
 
 ## Timetable data

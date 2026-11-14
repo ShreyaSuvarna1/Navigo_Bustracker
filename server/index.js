@@ -8,6 +8,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import nodemailer from 'nodemailer';
 import XLSX from 'xlsx';
 import Database from 'better-sqlite3';
 import { Server } from 'socket.io';
@@ -561,6 +562,11 @@ if (transit.loaded) {
 const brevoApiKey = process.env.BREVO_API_KEY || '';
 const brevoSenderEmail = process.env.BREVO_SENDER_EMAIL || '';
 const brevoSenderName = process.env.BREVO_SENDER_NAME || 'NAVIGO';
+const gmailUser = process.env.GMAIL_USER || '';
+const gmailAppPassword = process.env.GMAIL_APP_PASSWORD || '';
+const gmailMailer = gmailUser && gmailAppPassword
+  ? nodemailer.createTransport({ service: 'gmail', auth: { user: gmailUser, pass: gmailAppPassword } })
+  : null;
 
 const publicUser = user => ({
   id: user.id,
@@ -1099,11 +1105,11 @@ app.post('/api/auth/request-code', async (req, res) => {
     });
   }
 
-  if (!brevoApiKey || !brevoSenderEmail) {
-    console.error('BREVO_API_KEY or BREVO_SENDER_EMAIL is missing.');
+  if ((!brevoApiKey || !brevoSenderEmail) && !gmailMailer) {
+    console.error('No email provider is configured. Set Brevo or Gmail SMTP variables.');
 
     return res.status(503).json({
-      message: 'Email verification is not configured.'
+      message: 'Email verification is not configured. Set Brevo or Gmail SMTP variables on the server.'
     });
   }
 
@@ -1121,6 +1127,24 @@ app.post('/api/auth/request-code', async (req, res) => {
 
   try {
     console.log(`Attempting to send verification email to ${email}`);
+
+    // Keep Gmail App Password support for existing deployments. Prefer Brevo whenever both
+    // providers are configured, but never require a migration before users can receive codes.
+    if (!brevoApiKey || !brevoSenderEmail) {
+      await gmailMailer.sendMail({
+        from: `NAVIGO <${gmailUser}>`,
+        to: email,
+        subject: 'Your NAVIGO verification code',
+        text: `Your NAVIGO verification code is ${code}. It expires in 10 minutes.`,
+        html: `<p>Your NAVIGO verification code is</p><h1>${code}</h1><p>It expires in 10 minutes.</p>`
+      });
+
+      return res.status(202).json({
+        message: getUserByEmail(email)
+          ? 'Verification code sent. Verifying it will replace your old password and sign out previous sessions.'
+          : 'Verification code sent.'
+      });
+    }
 
     const brevoResponse = await fetch('https://api.brevo.com/v3/smtp/email', {
       method: 'POST',
@@ -1194,7 +1218,7 @@ app.post('/api/auth/request-code', async (req, res) => {
 
     return res.status(502).json({
       message: 'We could not send the verification email.',
-      provider: 'Brevo',
+      provider: brevoApiKey && brevoSenderEmail ? 'Brevo' : 'Gmail',
       error: error?.message || String(error)
     });
   }
