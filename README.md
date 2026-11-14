@@ -24,15 +24,17 @@ Generate a random `JWT_SECRET` with at least 32 characters. It signs user sessio
 3. Run `npm.cmd install` from PowerShell, then `npm.cmd run dev`.
 4. Open `http://localhost:5173`.
 
-Create a driver account in one browser and a passenger account in another. New accounts receive a six-digit verification code by Gmail before they can sign in. Start the driver shift and approve location permission; the passenger map updates immediately.
+Create a driver account in one browser and a passenger account in another. New accounts receive a six-digit verification code by email before they can sign in. Start the driver shift and approve location permission; the passenger map updates immediately.
 
-## Gmail verification
+## Email verification
 
-1. Turn on 2-Step Verification for the Gmail account that will send NAVIGO emails.
-2. Create a Gmail **App Password** and put the 16-character value in `GMAIL_APP_PASSWORD`.
-3. Add the sending address as `GMAIL_USER`.
+NAVIGO sends verification codes through [Brevo](https://www.brevo.com/). Add these server-only environment variables locally and in Render:
 
-Never use your normal Gmail password in `.env` or commit `.env` to Git.
+- `BREVO_API_KEY` — an SMTP/API key from Brevo
+- `BREVO_SENDER_EMAIL` — a sender address verified in Brevo
+- `BREVO_SENDER_NAME` — optional display name (defaults to `NAVIGO`)
+
+Never commit email-provider API keys to Git.
 
 ## Timetable data
 
@@ -65,7 +67,7 @@ The included `render.yaml` and `Dockerfile` deploy the web client and Socket.IO 
 
 1. Push this directory to a GitHub repository.
 2. In Render, choose **New** → **Blueprint** and select the repository.
-3. Set `GOOGLE_MAPS_API_KEY` and `GOOGLE_ROUTES_API_KEY` as secret environment variables.
+3. Set `GOOGLE_MAPS_API_KEY`, `GOOGLE_ROUTES_API_KEY`, `BREVO_API_KEY`, and `BREVO_SENDER_EMAIL` as secret environment variables.
 4. After Render gives you a URL, set `CLIENT_ORIGIN` to that exact URL and add the URL to the browser key's website restrictions.
 5. Redeploy once after updating the origin and key restrictions.
 

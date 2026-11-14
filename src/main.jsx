@@ -39,9 +39,24 @@ function AuthV2({ done }) {
   const driver = role === 'driver';
   const title = view === 'verify' ? 'Check your email' : view === 'register' ? `Create ${driver ? 'driver' : 'customer'} account` : `${driver ? 'Driver' : 'Customer'} sign in`;
   async function call(path, body) {
-    const r = await fetch(`${API}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.message || 'Something went wrong.');
+    let r;
+    try {
+      r = await fetch(`${API}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    } catch {
+      throw new Error('Could not reach the server. Check your internet connection and try again.');
+    }
+
+    const text = await r.text();
+    let data = {};
+    if (text) {
+      try { data = JSON.parse(text); }
+      catch {
+        throw new Error(r.ok ? 'The server returned an invalid response. Please try again shortly.' : `The server is temporarily unavailable (error ${r.status}). Please try again shortly.`);
+      }
+    }
+
+    if (!r.ok) throw new Error(data.message || `The server could not complete this request (error ${r.status}).`);
+    if (!data || typeof data !== 'object') throw new Error('The server returned an invalid response. Please try again shortly.');
     return data;
   }
   async function submit(e) {

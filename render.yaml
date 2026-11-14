@@ -19,5 +19,11 @@ services:
         sync: false
       - key: CLIENT_ORIGIN
         sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_SENDER_EMAIL
+        sync: false
+      - key: BREVO_SENDER_NAME
+        value: NAVIGO
       - key: USERS_DB_PATH
         value: /app/data/users.db
